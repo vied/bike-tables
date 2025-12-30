@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gear Inches Table</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; text-align: center; }
+    thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+    .controls { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0 16px; }
+    .control { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+    .control select { padding: 6px; border: 1px solid #ccc; background: #fff; }
+    .filter { position: relative; display: inline-block; width: 100%; }
+    .filter button {
+      width: 100%;
+      padding: 6px;
+      border: 1px solid #ccc;
+      background: #f8f8f8;
+      cursor: pointer;
+      text-align: center;
+    }
+    .filter-panel {
+      position: absolute;
+      left: 0;
+      right: 0;
+      margin-top: 4px;
+      max-height: 220px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      z-index: 2;
+      display: none;
+      text-align: left;
+    }
+    .filter.open .filter-panel { display: block; }
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      background: #fafafa;
+    }
+    .filter-actions button {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    .filter-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      white-space: nowrap;
+    }
+    .num { text-align: center; font-variant-numeric: tabular-nums; }
+    .note { color:#444; margin: 10px 0 16px; max-width: 70ch; }
+    .rowcount { margin-top: 10px; color: #444; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="./index.html">Home</a> | <a href="./wheel-od.html">Wheel OD</a> | <a href="./gear-inches.html">Gear inches</a> | <a href="./bike-trail.html">Bike trail</a>
+  </nav>
+  <h1>Gear inches table</h1>
+  <div class="note">
+    Choose a named size and tire width to generate the gear inches table.
+    Gear inches are estimated as <b>Wheel OD (in) × (crank teeth ÷ cog teeth)</b>.
+  </div>
+
+  <div class="controls">
+    <label class="control">
+      <span>Named size (BSD)</span>
+      <select id="sizeSelect">
+        <option value="">Select named size</option>
+      </select>
+    </label>
+    <label class="control">
+      <span>Tire width (mm)</span>
+      <select id="widthSelect">
+        <option value="">Select tire width</option>
+      </select>
+    </label>
+  </div>
+
+  <table id="gearTable">
+    <thead>
+      <tr>
+        <th class="num">Cranks number of teeth<br/><div class="filter" data-col="crank_teeth"></div></th>
+        <th class="num">Cogs number of teeth<br/><div class="filter" data-col="cog_teeth"></div></th>
+        <th class="num">Gear inches<br/><div class="filter" data-col="gear_inches"></div></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="rowcount" id="rowCount"></div>
+
+<script type="module">
+  const tbody = document.querySelector("#gearTable tbody");
+  const sizeSelect = document.querySelector("#sizeSelect");
+  const widthSelect = document.querySelector("#widthSelect");
+  const filterHosts = Array.from(document.querySelectorAll(".filter"));
+  const rowCount = document.querySelector("#rowCount");
+  const filterState = new Map();
+  const filterOptions = new Map();
+  let closeHandlerBound = false;
+  const STORAGE_KEYS = {
+    bsd: "bikeTables.selectedBsd",
+    width: "bikeTables.selectedWidth"
+  };
+
+  function getCellDisplay(row, col) {
+    if (col === "crank_teeth") return String(row.crank_teeth);
+    if (col === "cog_teeth") return String(row.cog_teeth);
+    if (col === "gear_inches") return row.gear_inches.toFixed(1);
+    return "";
+  }
+
+  function applyFilters(rows, filters) {
+    return rows.filter(r => {
+      for (const [col, selected] of filters.entries()) {
+        if (!selected || selected.size === 0) continue;
+        const value = getCellDisplay(r, col);
+        if (!selected.has(value)) return false;
+      }
+      return true;
+    });
+  }
+
+  function render(rows) {
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="num">${r.crank_teeth}</td>
+        <td class="num">${r.cog_teeth}</td>
+        <td class="num">${r.gear_inches.toFixed(1)}</td>
+      </tr>
+    `).join("");
+    rowCount.textContent = `${rows.length} row(s)`;
+  }
+
+  function clearTable(message) {
+    tbody.innerHTML = "";
+    rowCount.textContent = message;
+  }
+
+  function buildRowsFor(bsd, width, cranks, cogs) {
+    const rows = [];
+    const cranksSorted = [...cranks].sort((a,b) => a-b);
+    const cogsSorted = [...cogs].sort((a,b) => a-b);
+    const od_mm = bsd + 2 * width;
+    const od_in = od_mm / 25.4;
+
+    for (const crank of cranksSorted) {
+      for (const cog of cogsSorted) {
+        const gear_inches = od_in * (crank / cog);
+        rows.push({ crank_teeth: crank, cog_teeth: cog, gear_inches });
+      }
+    }
+    return rows;
+  }
+
+  function buildFilters(rows) {
+    const numericCols = new Set(["crank_teeth", "cog_teeth", "gear_inches"]);
+    filterState.clear();
+    filterOptions.clear();
+
+    for (const host of filterHosts) {
+      const col = host.dataset.col;
+      const values = new Set(rows.map(r => getCellDisplay(r, col)));
+      const options = Array.from(values);
+
+      options.sort((a, b) => {
+        if (numericCols.has(col)) return Number(a) - Number(b);
+        return a.localeCompare(b);
+      });
+
+      filterOptions.set(col, options);
+      filterState.set(col, new Set(options));
+
+      host.innerHTML = `
+        <button type="button" class="filter-toggle">All</button>
+        <div class="filter-panel">
+          <div class="filter-actions">
+            <button type="button" data-action="all">All</button>
+            <button type="button" data-action="none">None</button>
+          </div>
+          <div class="filter-list"></div>
+        </div>
+      `;
+
+      const toggle = host.querySelector(".filter-toggle");
+      const list = host.querySelector(".filter-list");
+
+      for (const value of options) {
+        const item = document.createElement("label");
+        item.className = "filter-option";
+        item.innerHTML = `
+          <input type="checkbox" value="${value}" checked />
+          <span>${value}</span>
+        `;
+        list.appendChild(item);
+      }
+
+      function updateButton() {
+        const selected = filterState.get(col);
+        const total = filterOptions.get(col)?.length ?? 0;
+        if (!selected || selected.size === 0) {
+          toggle.textContent = "None";
+        } else if (selected.size === total) {
+          toggle.textContent = "All";
+        } else {
+          toggle.textContent = `${selected.size} selected`;
+        }
+      }
+
+      host.addEventListener("click", (e) => {
+        const target = e.target;
+        if (target.closest(".filter-toggle")) {
+          host.classList.toggle("open");
+          return;
+        }
+
+        const action = target.dataset?.action;
+        if (action === "all" || action === "none") {
+          const selected = filterState.get(col);
+          selected.clear();
+          if (action === "all") {
+            for (const v of options) selected.add(v);
+          }
+          list.querySelectorAll("input[type=checkbox]").forEach(cb => {
+            cb.checked = selected.has(cb.value);
+          });
+          updateButton();
+          render(applyFilters(rows, filterState));
+          return;
+        }
+
+        if (target.type === "checkbox") {
+          const selected = filterState.get(col);
+          if (target.checked) selected.add(target.value);
+          else selected.delete(target.value);
+          updateButton();
+          render(applyFilters(rows, filterState));
+        }
+      });
+
+      updateButton();
+    }
+
+    if (!closeHandlerBound) {
+      document.addEventListener("click", (e) => {
+        for (const host of filterHosts) {
+          if (!host.contains(e.target)) host.classList.remove("open");
+        }
+      });
+      closeHandlerBound = true;
+    }
+  }
+
+  // Load compact data
+  const res = await fetch("./data/tire-sizes.json");
+  if (!res.ok) throw new Error(`Could not load JSON: HTTP ${res.status}`);
+  const raw = await res.json();
+
+  let bsds =
+    raw?.bsds_mm ?? raw?.bsds ?? raw?.BSDs ?? raw?.bsd_mm ?? raw?.bsd ?? null;
+
+  let widths =
+    raw?.tire_widths_mm ?? raw?.widths_mm ?? raw?.widths ?? raw?.tireWidthsMm ?? null;
+
+  const cranks = raw?.crank_teeth ?? raw?.cranks_teeth ?? raw?.cranks ?? null;
+  const cogs = raw?.cog_teeth ?? raw?.cogs_teeth ?? raw?.cogs ?? null;
+  const bsdNameMap = raw?.bsd_name_map ?? null;
+
+  if (!Array.isArray(bsds) || !Array.isArray(widths) || !Array.isArray(cranks) || !Array.isArray(cogs)) {
+    clearTable("ERROR: JSON loaded, but missing bsds_mm, tire_widths_mm, crank_teeth, or cog_teeth arrays.");
+    console.log("Loaded JSON:", raw);
+  }
+
+  const bsdsSorted = [...(bsds ?? [])].sort((a,b) => a-b);
+  const widthsSorted = [...(widths ?? [])].sort((a,b) => a-b);
+  const bsdMap = bsdNameMap ?? {};
+
+  for (const bsd of bsdsSorted) {
+    const name = bsdMap[String(bsd)];
+    const label = name ? `${name} (${bsd})` : String(bsd);
+    const option = document.createElement("option");
+    option.value = String(bsd);
+    option.textContent = label;
+    sizeSelect.appendChild(option);
+  }
+
+  for (const w of widthsSorted) {
+    const option = document.createElement("option");
+    option.value = String(w);
+    option.textContent = String(w);
+    widthSelect.appendChild(option);
+  }
+
+  function refreshTable() {
+    if (!sizeSelect.value || !widthSelect.value) {
+      clearTable("Select named size and tire width to load the table.");
+      return;
+    }
+
+    const bsd = Number(sizeSelect.value);
+    const width = Number(widthSelect.value);
+    const rows = buildRowsFor(bsd, width, cranks ?? [], cogs ?? []);
+    buildFilters(rows);
+    render(applyFilters(rows, filterState));
+  }
+
+  function persistSelections() {
+    localStorage.setItem(STORAGE_KEYS.bsd, sizeSelect.value);
+    localStorage.setItem(STORAGE_KEYS.width, widthSelect.value);
+  }
+
+  sizeSelect.addEventListener("change", () => {
+    persistSelections();
+    refreshTable();
+  });
+  widthSelect.addEventListener("change", () => {
+    persistSelections();
+    refreshTable();
+  });
+  const savedBsd = localStorage.getItem(STORAGE_KEYS.bsd);
+  const savedWidth = localStorage.getItem(STORAGE_KEYS.width);
+  if (savedBsd) sizeSelect.value = savedBsd;
+  if (savedWidth) widthSelect.value = savedWidth;
+  clearTable("Select named size and tire width to load the table.");
+  refreshTable();
+</script>
+</body>
+</html>

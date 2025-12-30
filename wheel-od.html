@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bike Tire Size Table</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; text-align: center; }
+    thead th { position: sticky; top: 0; background: #fff; z-index: 1; }
+    .filter { position: relative; display: inline-block; width: 100%; }
+    .filter button {
+      width: 100%;
+      padding: 6px;
+      border: 1px solid #ccc;
+      background: #f8f8f8;
+      cursor: pointer;
+      text-align: center;
+    }
+    .filter-panel {
+      position: absolute;
+      left: 0;
+      right: 0;
+      margin-top: 4px;
+      max-height: 220px;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #ddd;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      z-index: 2;
+      display: none;
+      text-align: left;
+    }
+    .filter.open .filter-panel { display: block; }
+    .filter-actions {
+      display: flex;
+      gap: 8px;
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      background: #fafafa;
+    }
+    .filter-actions button {
+      flex: 1;
+      padding: 4px 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+    .filter-option {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      white-space: nowrap;
+    }
+    .diagram {
+      width: 100%;
+      max-width: 680px;
+      height: auto;
+      display: block;
+      margin: 8px 0 18px;
+    }
+    .num { text-align: center; font-variant-numeric: tabular-nums; }
+    .note { color:#444; margin: 10px 0 16px; max-width: 70ch; }
+    .rowcount { margin-top: 10px; color: #444; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="./index.html">Home</a> | <a href="./wheel-od.html">Wheel OD</a> | <a href="./gear-inches.html">Gear inches</a> | <a href="./bike-trail.html">Bike trail</a>
+  </nav>
+  <h1>Wheel OD estimator</h1>
+  <div class="note">
+    Total wheel diameter is estimated as <b>BSD + 2×(tire width)</b>, using tire width as a proxy for tire height.
+    Real outside diameter varies by tire model, rim width, and pressure.
+  </div>
+
+  <svg class="diagram" viewBox="0 0 640 200" role="img" aria-label="Diagram showing BSD, tire width, and total wheel diameter">
+    <defs>
+      <marker id="arrow" markerWidth="8" markerHeight="10" refX="4" refY="5" orient="auto">
+        <line x1="4" y1="0" x2="4" y2="10" stroke="#444" stroke-width="2" />
+      </marker>
+    </defs>
+    <circle cx="320" cy="100" r="80" fill="none" stroke="#444" stroke-width="2" />
+    <circle cx="320" cy="100" r="45" fill="none" stroke="#888" stroke-width="2" stroke-dasharray="4 4" />
+
+    <line x1="275" y1="100" x2="365" y2="100" stroke="#444" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+    <text x="320" y="85" text-anchor="middle" font-size="12" fill="#444">BSD</text>
+
+    <line x1="365" y1="100" x2="400" y2="100" stroke="#444" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+    <text x="382" y="85" text-anchor="middle" font-size="12" fill="#444">Tire width</text>
+
+    <line x1="240" y1="170" x2="400" y2="170" stroke="#444" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)" />
+    <text x="320" y="160" text-anchor="middle" font-size="12" fill="#444">Total wheel diameter (OD)</text>
+  </svg>
+
+  <table id="tireTable">
+    <thead>
+      <tr>
+        <th>Named size<br/><div class="filter" data-col="size_name"></div></th>
+        <th class="num">BSD (mm)<br/><div class="filter" data-col="bsd_mm"></div></th>
+        <th class="num">Tire width (mm)<br/><div class="filter" data-col="width_mm"></div></th>
+        <th class="num">Tire width (in)<br/><div class="filter" data-col="width_in"></div></th>
+        <th class="num">Total wheel diameter (mm)<br/><div class="filter" data-col="od_mm"></div></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="rowcount" id="rowCount"></div>
+
+<script type="module">
+  const tbody = document.querySelector("#tireTable tbody");
+  const filterHosts = Array.from(document.querySelectorAll(".filter"));
+  const rowCount = document.querySelector("#rowCount");
+  const filterState = new Map();
+  const filterOptions = new Map();
+
+  function getCellDisplay(row, col) {
+    if (col === "size_name") return row.size_name ?? "";
+    if (col === "bsd_mm") return String(row.bsd_mm);
+    if (col === "width_mm") return String(row.width_mm);
+    if (col === "width_in") return row.width_in.toFixed(2);
+    if (col === "od_mm") return String(Math.round(row.od_mm));
+    return "";
+  }
+
+  function applyFilters(rows, filters) {
+    return rows.filter(r => {
+      for (const [col, selected] of filters.entries()) {
+        if (!selected || selected.size === 0) continue;
+        const value = getCellDisplay(r, col);
+        if (!selected.has(value)) return false;
+      }
+      return true;
+    });
+  }
+
+  function render(rows) {
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.size_name ?? ""}</td>
+        <td class="num">${r.bsd_mm}</td>
+        <td class="num">${r.width_mm}</td>
+        <td class="num">${r.width_in.toFixed(2)}</td>
+        <td class="num">${Math.round(r.od_mm)}</td>
+      </tr>
+    `).join("");
+    rowCount.textContent = `${rows.length} row(s)`;
+  }
+
+  function refresh(rows) {
+    render(applyFilters(rows, filterState));
+  }
+
+  function cartesianProduct(bsds, widths, bsdNames) {
+    // Small optimization: build in a stable sort order (BSD asc, width asc)
+    const rows = [];
+    const bsdsSorted = [...bsds].sort((a,b) => a-b);
+    const widthsSorted = [...widths].sort((a,b) => a-b);
+
+    for (const bsd of bsdsSorted) {
+      for (const w of widthsSorted) {
+        const width_in = w / 25.4;
+        const od_mm = bsd + 2 * w; // estimated total OD
+        const size_name = bsdNames?.[String(bsd)] ?? "";
+        rows.push({ size_name, bsd_mm: bsd, width_mm: w, width_in, od_mm });
+      }
+    }
+    return rows;
+  }
+
+  // Load compact data
+const res = await fetch("./data/tire-sizes.json");
+if (!res.ok) throw new Error(`Could not load JSON: HTTP ${res.status}`);
+const raw = await res.json();
+
+// Accept multiple shapes:
+// 1) { bsds_mm: [...], tire_widths_mm: [...] }
+// 2) { bsds: [...], widths_mm: [...] } etc.
+// 3) { bsds_mm: [...], tireWidthsMm: [...] } etc.
+let bsds =
+  raw?.bsds_mm ?? raw?.bsds ?? raw?.BSDs ?? raw?.bsd_mm ?? raw?.bsd ?? null;
+
+let widths =
+  raw?.tire_widths_mm ?? raw?.widths_mm ?? raw?.widths ?? raw?.tireWidthsMm ?? null;
+
+const bsdNameMap = raw?.bsd_name_map ?? null;
+
+// If someone accidentally left the *old* array-of-rows format in place,
+// try to recover by extracting unique BSD/width values.
+if (Array.isArray(raw) && (!bsds || !widths)) {
+  const b = new Set();
+  const w = new Set();
+  for (const r of raw) {
+    if (typeof r?.bsd_mm === "number") b.add(r.bsd_mm);
+    if (typeof r?.width_mm === "number") w.add(r.width_mm);
+    if (typeof r?.etrto === "string") {
+      const m = r.etrto.trim().match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) { w.add(Number(m[1])); b.add(Number(m[2])); }
+    }
+  }
+  bsds = [...b];
+  widths = [...w];
+}
+
+if (!Array.isArray(bsds) || !Array.isArray(widths) || bsds.length === 0 || widths.length === 0) {
+  document.getElementById("rowCount").textContent =
+    "ERROR: JSON loaded, but couldn't find non-empty bsds_mm and tire_widths_mm arrays.";
+  console.log("Loaded JSON:", raw);
+}
+
+const DATA = cartesianProduct(bsds ?? [], widths ?? [], bsdNameMap ?? {});
+buildFilters(DATA);
+refresh(DATA);
+
+function buildFilters(rows) {
+  const numericCols = new Set(["bsd_mm", "width_mm", "width_in", "od_mm"]);
+
+  for (const host of filterHosts) {
+    const col = host.dataset.col;
+    const values = new Set(rows.map(r => getCellDisplay(r, col)));
+    const options = Array.from(values);
+
+    options.sort((a, b) => {
+      if (numericCols.has(col)) return Number(a) - Number(b);
+      if (a === "" && b !== "") return 1;
+      if (b === "" && a !== "") return -1;
+      return a.localeCompare(b);
+    });
+
+    filterOptions.set(col, options);
+    filterState.set(col, new Set(options));
+
+    host.innerHTML = `
+      <button type="button" class="filter-toggle">All</button>
+      <div class="filter-panel">
+        <div class="filter-actions">
+          <button type="button" data-action="all">All</button>
+          <button type="button" data-action="none">None</button>
+        </div>
+        <div class="filter-list"></div>
+      </div>
+    `;
+
+    const toggle = host.querySelector(".filter-toggle");
+    const panel = host.querySelector(".filter-panel");
+    const list = host.querySelector(".filter-list");
+
+    for (const value of options) {
+      const label = value === "" ? "—" : value;
+      const item = document.createElement("label");
+      item.className = "filter-option";
+      item.innerHTML = `
+        <input type="checkbox" value="${value}" checked />
+        <span>${label}</span>
+      `;
+      list.appendChild(item);
+    }
+
+    function updateButton() {
+      const selected = filterState.get(col);
+      const total = filterOptions.get(col)?.length ?? 0;
+      if (!selected || selected.size === 0) {
+        toggle.textContent = "None";
+      } else if (selected.size === total) {
+        toggle.textContent = "All";
+      } else {
+        toggle.textContent = `${selected.size} selected`;
+      }
+    }
+
+    host.addEventListener("click", (e) => {
+      const target = e.target;
+      if (target.closest(".filter-toggle")) {
+        host.classList.toggle("open");
+        return;
+      }
+
+      const action = target.dataset?.action;
+      if (action === "all" || action === "none") {
+        const selected = filterState.get(col);
+        selected.clear();
+        if (action === "all") {
+          for (const v of options) selected.add(v);
+        }
+        list.querySelectorAll("input[type=checkbox]").forEach(cb => {
+          cb.checked = selected.has(cb.value);
+        });
+        updateButton();
+        refresh(rows);
+        return;
+      }
+
+      if (target.type === "checkbox") {
+        const selected = filterState.get(col);
+        if (target.checked) selected.add(target.value);
+        else selected.delete(target.value);
+        updateButton();
+        refresh(rows);
+      }
+    });
+
+    updateButton();
+  }
+
+  document.addEventListener("click", (e) => {
+    for (const host of filterHosts) {
+      if (!host.contains(e.target)) host.classList.remove("open");
+    }
+  });
+}
+
+</script>
+</body>
+</html>
