@@ -125,16 +125,46 @@
   }
 
   // Load compact data
-  const raw = await (await fetch("./data/tire-sizes.json")).json();
-  const DATA = cartesianProduct(raw.bsds_mm ?? [], raw.tire_widths_mm ?? []);
+const res = await fetch("./data/tire-sizes.json");
+if (!res.ok) throw new Error(`Could not load JSON: HTTP ${res.status}`);
+const raw = await res.json();
 
-  function refresh() {
-    const filtered = applyFilters(DATA, getFilters());
-    render(filtered);
+// Accept multiple shapes:
+// 1) { bsds_mm: [...], tire_widths_mm: [...] }
+// 2) { bsds: [...], widths_mm: [...] } etc.
+// 3) { bsds_mm: [...], tireWidthsMm: [...] } etc.
+let bsds =
+  raw?.bsds_mm ?? raw?.bsds ?? raw?.BSDs ?? raw?.bsd_mm ?? raw?.bsd ?? null;
+
+let widths =
+  raw?.tire_widths_mm ?? raw?.widths_mm ?? raw?.widths ?? raw?.tireWidthsMm ?? null;
+
+// If someone accidentally left the *old* array-of-rows format in place,
+// try to recover by extracting unique BSD/width values.
+if (Array.isArray(raw) && (!bsds || !widths)) {
+  const b = new Set();
+  const w = new Set();
+  for (const r of raw) {
+    if (typeof r?.bsd_mm === "number") b.add(r.bsd_mm);
+    if (typeof r?.width_mm === "number") w.add(r.width_mm);
+    if (typeof r?.etrto === "string") {
+      const m = r.etrto.trim().match(/^(\d+)\s*-\s*(\d+)$/);
+      if (m) { w.add(Number(m[1])); b.add(Number(m[2])); }
+    }
   }
+  bsds = [...b];
+  widths = [...w];
+}
 
-  inputs.forEach(i => i.addEventListener("input", refresh));
-  render(DATA);
+if (!Array.isArray(bsds) || !Array.isArray(widths) || bsds.length === 0 || widths.length === 0) {
+  document.getElementById("rowCount").textContent =
+    "ERROR: JSON loaded, but couldn't find non-empty bsds_mm and tire_widths_mm arrays.";
+  console.log("Loaded JSON:", raw);
+}
+
+const DATA = cartesianProduct(bsds ?? [], widths ?? []);
+render(DATA);
+
 </script>
 </body>
 </html>
